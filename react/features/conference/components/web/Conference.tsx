@@ -27,6 +27,7 @@ import { toggleToolboxVisible } from '../../../toolbox/actions.any';
 import { fullScreenChanged, showToolbox } from '../../../toolbox/actions.web';
 import JitsiPortal from '../../../toolbox/components/web/JitsiPortal';
 import Toolbox from '../../../toolbox/components/web/Toolbox';
+import { isToolboxVisible } from '../../../toolbox/functions.web';
 import { LAYOUT_CLASSNAMES } from '../../../video-layout/constants';
 import { getCurrentLayout } from '../../../video-layout/functions.any';
 import { maybeShowSuboptimalExperienceNotification } from '../../functions.web';
@@ -66,6 +67,11 @@ interface IProps extends AbstractProps, WithTranslation {
      * Are any overlays visible?
      */
     _isAnyOverlayVisible: boolean;
+
+    /**
+     * Whether or not the toolbox is visible.
+     */
+    _isToolboxVisible: boolean;
 
     /**
      * The CSS class to apply to the root of {@link Conference} to modify the
@@ -199,6 +205,7 @@ class Conference extends AbstractConference<IProps, any> {
     render() {
         const {
             _isAnyOverlayVisible,
+            _isToolboxVisible,
             _layoutClassName,
             _notificationsVisible,
             _overflowDrawer,
@@ -222,6 +229,7 @@ class Conference extends AbstractConference<IProps, any> {
                     <ConferenceInfo />
                     <Notice />
                     <div
+                        className = { _isToolboxVisible ? 'with-toolbox' : '' }
                         id = 'videospace'
                         onTouchStart = { this._onVidespaceTouchStart }>
                         <LargeVideo />
@@ -396,6 +404,7 @@ function _mapStateToProps(state: IReduxState) {
         ...abstractMapStateToProps(state),
         _backgroundAlpha: backgroundAlpha,
         _isAnyOverlayVisible: Boolean(getOverlayToRender(state)),
+        _isToolboxVisible: isToolboxVisible(state),
         _layoutClassName: LAYOUT_CLASSNAMES[getCurrentLayout(state) ?? ''],
         _mouseMoveCallbackInterval: mouseMoveCallbackInterval,
         _overflowDrawer: overflowDrawer,

@@ -1,5 +1,4 @@
 import { withStyles } from '@mui/styles';
-import clsx from 'clsx';
 import React, { Component, RefObject } from 'react';
 import { WithTranslation } from 'react-i18next';
 import { batch, connect } from 'react-redux';
@@ -295,11 +294,6 @@ interface IProps extends WithTranslation {
     _sharingVideo?: boolean;
 
     /**
-     * Whether the toolbox should be shifted up or not.
-     */
-    _shiftUp: boolean;
-
-    /**
      * Whether or not the shortcut buttons are enabled.
      */
     _shortcutsEnabled: boolean;
@@ -582,7 +576,7 @@ class Toolbox extends Component<IProps> {
 
         return (
             <div
-                className = { clsx(rootClassNames, this.props._shiftUp && 'shift-up') }
+                className = { rootClassNames }
                 id = 'new-toolbox'>
                 { this._renderToolboxContent() }
             </div>
@@ -1620,7 +1614,6 @@ function _mapStateToProps(state: IReduxState, ownProps: any) {
         _reactionsButtonEnabled: isReactionsButtonEnabled(state),
         _reactionsEnabled,
         _screenSharing: isScreenVideoShared(state),
-        _shiftUp: state['features/toolbox'].shiftUp,
         _shortcutsEnabled: areKeyboardShortcutsEnabled(state),
         _tileViewEnabled: shouldDisplayTileView(state),
         _toolbarButtons: toolbarButtons,
