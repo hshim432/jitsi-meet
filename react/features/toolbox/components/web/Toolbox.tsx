@@ -1,11 +1,8 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { WithTranslation } from 'react-i18next';
-import { batch, connect } from 'react-redux';
+import { connect } from 'react-redux';
 import { makeStyles } from 'tss-react/mui';
 
-import { isSpeakerStatsDisabled } from '../../../../features/speaker-stats/functions';
-import { ACTION_SHORTCUT_TRIGGERED, createShortcutEvent } from '../../../analytics/AnalyticsEvents';
-import { sendAnalytics } from '../../../analytics/functions';
 import { IReduxState, IStore } from '../../../app/types';
 import { VISITORS_MODE_BUTTONS } from '../../../base/config/constants';
 import {
@@ -13,47 +10,13 @@ import {
     getToolbarButtons,
     isToolbarButtonEnabled
 } from '../../../base/config/functions.web';
-import { toggleDialog } from '../../../base/dialog/actions';
 import { isMobileBrowser } from '../../../base/environment/utils';
 import { translate } from '../../../base/i18n/functions';
-import JitsiMeetJS from '../../../base/lib-jitsi-meet';
-import {
-    raiseHand
-} from '../../../base/participants/actions';
-import {
-    getLocalParticipant,
-    hasRaisedHand,
-    isLocalParticipantModerator
-} from '../../../base/participants/functions';
+import { isLocalParticipantModerator } from '../../../base/participants/functions';
 import ContextMenu from '../../../base/ui/components/web/ContextMenu';
-import { toggleChat } from '../../../chat/actions.web';
-import { setGifMenuVisibility } from '../../../gifs/actions';
-import { isGifEnabled } from '../../../gifs/functions.web';
-import { registerShortcut, unregisterShortcut } from '../../../keyboard-shortcuts/actions';
-import {
-    close as closeParticipantsPane,
-    open as openParticipantsPane
-} from '../../../participants-pane/actions.web';
-import { getParticipantsPaneOpen } from '../../../participants-pane/functions';
-import {
-    addReactionToBuffer,
-    toggleReactionsMenuVisibility
-} from '../../../reactions/actions.web';
-import { REACTIONS } from '../../../reactions/constants';
 import { isReactionsButtonEnabled, isReactionsEnabled } from '../../../reactions/functions.web';
-import {
-    startScreenShareFlow
-} from '../../../screen-share/actions.web';
-import {
-    isScreenVideoShared
-} from '../../../screen-share/functions';
-import SpeakerStats from '../../../speaker-stats/components/web/SpeakerStats';
-import { toggleTileView } from '../../../video-layout/actions.web';
-import { shouldDisplayTileView } from '../../../video-layout/functions.web';
-import VideoQualityDialog from '../../../video-quality/components/VideoQualityDialog.web';
 import { iAmVisitor } from '../../../visitors/functions';
 import {
-    setFullScreen,
     setHangupMenuVisible,
     setOverflowMenuVisible,
     setToolbarHovered,
@@ -63,9 +26,9 @@ import { NOTIFY_CLICK_MODE, NOT_APPLICABLE, THRESHOLDS } from '../../constants';
 import {
     getAllToolboxButtons,
     getJwtDisabledButtons,
-    isDesktopShareButtonDisabled,
     isToolboxVisible
 } from '../../functions.web';
+import { useKeyboardShortcuts } from '../../hooks.web';
 import { IToolboxButton } from '../../types';
 import HangupButton from '../HangupButton';
 
@@ -104,16 +67,6 @@ interface IProps extends WithTranslation {
     _customToolbarButtons?: Array<{ icon: string; id: string; text: string; }>;
 
     /**
-     * Whether or not screensharing button is disabled.
-     */
-    _desktopSharingButtonDisabled: boolean;
-
-    /**
-     * Whether or not screensharing is initialized.
-     */
-    _desktopSharingEnabled: boolean;
-
-    /**
      * Whether or not a dialog is displayed.
      */
     _dialog: boolean;
@@ -127,16 +80,6 @@ interface IProps extends WithTranslation {
      * Whether the end conference feature is supported.
      */
     _endConferenceSupported: boolean;
-
-    /**
-     * Whether or not the app is currently in full screen.
-     */
-    _fullScreen?: boolean;
-
-    /**
-     * Whether or not the GIFs feature is enabled.
-     */
-    _gifsEnabled: boolean;
 
     /**
      * Whether the hangup menu is visible.
@@ -154,14 +97,9 @@ interface IProps extends WithTranslation {
     _isNarrowLayout: boolean;
 
     /**
-     * Whether or not speaker stats is disable.
-     */
-    _isSpeakerStatsDisabled?: boolean;
-
-    /**
      * The array of toolbar buttons disabled through jwt features.
      */
-    _jwtDisabledButons: string[];
+    _jwtDisabledButtons: string[];
 
     /**
      * Whether or not the overflow menu is displayed in a drawer drawer.
@@ -174,16 +112,6 @@ interface IProps extends WithTranslation {
     _overflowMenuVisible: boolean;
 
     /**
-     * Whether or not the participants pane is open.
-     */
-    _participantsPaneOpen: boolean;
-
-    /**
-     * Whether or not the local participant's hand is raised.
-     */
-    _raisedHand: boolean;
-
-    /**
      * Whether or not to display reactions in separate button.
      */
     _reactionsButtonEnabled: boolean;
@@ -194,19 +122,9 @@ interface IProps extends WithTranslation {
     _reactionsEnabled: boolean;
 
     /**
-     * Whether or not the local participant is screenSharing.
-     */
-    _screenSharing: boolean;
-
-    /**
      * Whether the toolbox should be shifted up or not.
      */
     _shiftUp: boolean;
-
-    /**
-     * Whether or not the tile view is enabled.
-     */
-    _tileViewEnabled: boolean;
 
     /**
      * The enabled buttons.
@@ -253,294 +171,42 @@ const useStyles = makeStyles()(() => {
     };
 });
 
-const Toolbox = (props: IProps) => {
+const Toolbox = ({
+    _buttonsWithNotifyClick,
+    _chatOpen,
+    _clientWidth,
+    _customToolbarButtons,
+    _dialog,
+    _disabled,
+    _endConferenceSupported,
+    _hangupMenuVisible,
+    _isMobile,
+    _isNarrowLayout,
+    _jwtDisabledButtons,
+    _overflowDrawer,
+    _overflowMenuVisible,
+    _reactionsButtonEnabled,
+    _reactionsEnabled,
+    _shiftUp,
+    _toolbarButtons,
+    _visible,
+    dispatch,
+    t,
+    toolbarButtons
+}: IProps) => {
     const { classes, cx } = useStyles();
     const _toolboxRef = useRef<HTMLDivElement>(null);
 
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling the display of chat.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleChat() {
-        sendAnalytics(createShortcutEvent(
-            'toggle.chat',
-            ACTION_SHORTCUT_TRIGGERED,
-            {
-                enable: !props._chatOpen
-            }));
-
-        // Checks if there was any text selected by the user.
-        // Used for when we press simultaneously keys for copying
-        // text messages from the chat board
-        if (window.getSelection()?.toString() !== '') {
-            return false;
-        }
-
-        props.dispatch(toggleChat());
-    }
-
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling the display of the participants pane.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleParticipantsPane() {
-        const { dispatch, _participantsPaneOpen } = props;
-
-        sendAnalytics(createShortcutEvent(
-            'toggle.participants-pane',
-            ACTION_SHORTCUT_TRIGGERED,
-            {
-                enable: !props._participantsPaneOpen
-            }));
-
-        if (_participantsPaneOpen) {
-            dispatch(closeParticipantsPane());
-        } else {
-            dispatch(openParticipantsPane());
-        }
-    }
-
-    /**
-    * Creates an analytics keyboard shortcut event and dispatches an action for
-    * toggling the display of Video Quality.
-    *
-    * @private
-    * @returns {void}
-    */
-    function _onShortcutToggleVideoQuality() {
-        sendAnalytics(createShortcutEvent('video.quality'));
-
-        props.dispatch(toggleDialog(VideoQualityDialog));
-    }
-
-    /**
-     * Dispatches an action for toggling the tile view.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleTileView() {
-        sendAnalytics(createShortcutEvent(
-            'toggle.tileview',
-            ACTION_SHORTCUT_TRIGGERED,
-            {
-                enable: !props._tileViewEnabled
-            }));
-
-        props.dispatch(toggleTileView());
-    }
-
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling full screen mode.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleFullScreen() {
-        const { dispatch, _fullScreen } = props;
-
-        sendAnalytics(createShortcutEvent(
-            'toggle.fullscreen',
-            ACTION_SHORTCUT_TRIGGERED,
-            {
-                enable: !_fullScreen
-            }));
-        dispatch(setFullScreen(!_fullScreen));
-    }
-
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling raise hand.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleRaiseHand() {
-        const { dispatch, _raisedHand } = props;
-
-        sendAnalytics(createShortcutEvent(
-            'toggle.raise.hand',
-            ACTION_SHORTCUT_TRIGGERED,
-            { enable: !_raisedHand }));
-
-        dispatch(raiseHand(!_raisedHand));
-    }
-
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling screensharing.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutToggleScreenshare() {
-        const {
-            _desktopSharingButtonDisabled,
-            _desktopSharingEnabled,
-            _screenSharing,
-            dispatch
-        } = props;
-
-        // Ignore the shortcut if the button is disabled.
-        if (_desktopSharingButtonDisabled) {
-            return;
-        }
-        sendAnalytics(createShortcutEvent(
-            'toggle.screen.sharing',
-            ACTION_SHORTCUT_TRIGGERED,
-            {
-                enable: !_screenSharing
-            }));
-
-        if (_desktopSharingEnabled && !_desktopSharingButtonDisabled) {
-            dispatch(startScreenShareFlow(!_screenSharing));
-        }
-    }
-
-    /**
-     * Creates an analytics keyboard shortcut event and dispatches an action for
-     * toggling speaker stats.
-     *
-     * @private
-     * @returns {void}
-     */
-    function _onShortcutSpeakerStats() {
-        const { dispatch } = props;
-
-        sendAnalytics(createShortcutEvent(
-            'speaker.stats'
-        ));
-
-        dispatch(toggleDialog(SpeakerStats, {
-            conference: APP.conference
-        }));
-    }
+    useKeyboardShortcuts(toolbarButtons);
 
     useEffect(() => {
-        const { _toolbarButtons, dispatch, _reactionsEnabled, _gifsEnabled, _isSpeakerStatsDisabled } = props;
-
-        const KEYBOARD_SHORTCUTS = [
-            isToolbarButtonEnabled('videoquality', _toolbarButtons) && {
-                character: 'A',
-                exec: _onShortcutToggleVideoQuality,
-                helpDescription: 'toolbar.callQuality'
-            },
-            isToolbarButtonEnabled('chat', _toolbarButtons) && {
-                character: 'C',
-                exec: _onShortcutToggleChat,
-                helpDescription: 'keyboardShortcuts.toggleChat'
-            },
-            isToolbarButtonEnabled('desktop', _toolbarButtons) && {
-                character: 'D',
-                exec: _onShortcutToggleScreenshare,
-                helpDescription: 'keyboardShortcuts.toggleScreensharing'
-            },
-            isToolbarButtonEnabled('participants-pane', _toolbarButtons) && {
-                character: 'P',
-                exec: _onShortcutToggleParticipantsPane,
-                helpDescription: 'keyboardShortcuts.toggleParticipantsPane'
-            },
-            isToolbarButtonEnabled('raisehand', _toolbarButtons) && {
-                character: 'R',
-                exec: _onShortcutToggleRaiseHand,
-                helpDescription: 'keyboardShortcuts.raiseHand'
-            },
-            isToolbarButtonEnabled('fullscreen', _toolbarButtons) && {
-                character: 'S',
-                exec: _onShortcutToggleFullScreen,
-                helpDescription: 'keyboardShortcuts.fullScreen'
-            },
-            isToolbarButtonEnabled('tileview', _toolbarButtons) && {
-                character: 'W',
-                exec: _onShortcutToggleTileView,
-                helpDescription: 'toolbar.tileViewToggle'
-            },
-            !_isSpeakerStatsDisabled && isToolbarButtonEnabled('stats', _toolbarButtons) && {
-                character: 'T',
-                exec: _onShortcutSpeakerStats,
-                helpDescription: 'keyboardShortcuts.showSpeakerStats'
-            }
-        ];
-
-        KEYBOARD_SHORTCUTS.forEach(shortcut => {
-            if (typeof shortcut === 'object') {
-                dispatch(registerShortcut({
-                    character: shortcut.character,
-                    handler: shortcut.exec,
-                    helpDescription: shortcut.helpDescription
-                }));
-            }
-        });
-
-        if (_reactionsEnabled) {
-            const REACTION_SHORTCUTS = Object.keys(REACTIONS).map(key => {
-                const onShortcutSendReaction = () => {
-                    dispatch(addReactionToBuffer(key));
-                    sendAnalytics(createShortcutEvent(
-                        `reaction.${key}`
-                    ));
-                };
-
-                return {
-                    character: REACTIONS[key].shortcutChar,
-                    exec: onShortcutSendReaction,
-                    helpDescription: `toolbar.reaction${key.charAt(0).toUpperCase()}${key.slice(1)}`,
-                    altKey: true
-                };
-            });
-
-            REACTION_SHORTCUTS.forEach(shortcut => {
-                dispatch(registerShortcut({
-                    alt: shortcut.altKey,
-                    character: shortcut.character,
-                    handler: shortcut.exec,
-                    helpDescription: shortcut.helpDescription
-                }));
-            });
-
-            if (_gifsEnabled) {
-                const onGifShortcut = () => {
-                    batch(() => {
-                        dispatch(toggleReactionsMenuVisibility());
-                        dispatch(setGifMenuVisibility(true));
-                    });
-                };
-
-                dispatch(registerShortcut({
-                    character: 'G',
-                    handler: onGifShortcut,
-                    helpDescription: 'keyboardShortcuts.giphyMenu'
-                }));
-            }
-        }
-
-        return () => {
-            [ 'A', 'C', 'D', 'P', 'R', 'S', 'W', 'T', 'G' ].forEach(letter =>
-                dispatch(unregisterShortcut(letter)));
-
-            if (props._reactionsEnabled) {
-                Object.keys(REACTIONS).map(key => REACTIONS[key].shortcutChar)
-                    .forEach(letter =>
-                        dispatch(unregisterShortcut(letter, true)));
-            }
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!props._visible) {
+        if (!_visible) {
             if (document.activeElement instanceof HTMLElement
                 && _toolboxRef.current?.contains(document.activeElement)) {
                 document.activeElement.blur();
             }
         }
-    }, [ props._visible ]);
+    }, [ _visible ]);
 
     /**
      * Sets the visibility of the hangup menu.
@@ -550,9 +216,9 @@ const Toolbox = (props: IProps) => {
      * @private
      * @returns {void}
      */
-    const _onSetHangupVisible = useCallback((visible: boolean) => {
-        props.dispatch(setHangupMenuVisible(visible));
-        props.dispatch(setToolbarHovered(visible));
+    const onSetHangupVisible = useCallback((visible: boolean) => {
+        dispatch(setHangupMenuVisible(visible));
+        dispatch(setToolbarHovered(visible));
     }, []);
 
     /**
@@ -563,24 +229,24 @@ const Toolbox = (props: IProps) => {
      * @private
      * @returns {void}
      */
-    const _onSetOverflowVisible = useCallback((visible: boolean) => {
-        props.dispatch(setOverflowMenuVisible(visible));
-        props.dispatch(setToolbarHovered(visible));
+    const onSetOverflowVisible = useCallback((visible: boolean) => {
+        dispatch(setOverflowMenuVisible(visible));
+        dispatch(setToolbarHovered(visible));
     }, []);
 
     useEffect(() => {
-        if (props._hangupMenuVisible && !props._visible) {
-            _onSetHangupVisible(false);
-            props.dispatch(setToolbarHovered(false));
+        if (_hangupMenuVisible && !_visible) {
+            onSetHangupVisible(false);
+            dispatch(setToolbarHovered(false));
         }
-    }, [ props._hangupMenuVisible, props._visible ]);
+    }, [ _hangupMenuVisible, _visible ]);
 
     useEffect(() => {
-        if (props._overflowMenuVisible && props._dialog) {
-            _onSetOverflowVisible(false);
-            props.dispatch(setToolbarHovered(false));
+        if (_overflowMenuVisible && _dialog) {
+            onSetOverflowVisible(false);
+            dispatch(setToolbarHovered(false));
         }
-    }, [ props._overflowMenuVisible, props._dialog ]);
+    }, [ _overflowMenuVisible, _dialog ]);
 
     /**
      * Key handler for overflow/hangup menus.
@@ -588,15 +254,13 @@ const Toolbox = (props: IProps) => {
      * @param {KeyboardEvent} e - Esc key click to close the popup.
      * @returns {void}
      */
-    const _onEscKey = useCallback((e?: React.KeyboardEvent) => {
-        const { dispatch, _hangupMenuVisible, _overflowMenuVisible } = props;
-
+    const onEscKey = useCallback((e?: React.KeyboardEvent) => {
         if (e?.key === 'Escape') {
             e?.stopPropagation();
             _hangupMenuVisible && dispatch(setHangupMenuVisible(false));
             _overflowMenuVisible && dispatch(setOverflowMenuVisible(false));
         }
-    }, [ props._hangupMenuVisible, props._overflowMenuVisible ]);
+    }, [ _hangupMenuVisible, _overflowMenuVisible ]);
 
     /**
      * Returns the notify mode of the given toolbox button.
@@ -604,8 +268,8 @@ const Toolbox = (props: IProps) => {
      * @param {string} btnName - The toolbar button's name.
      * @returns {string|undefined} - The button's notify mode.
      */
-    function _getButtonNotifyMode(btnName: string) {
-        const notify = props._buttonsWithNotifyClick?.find(
+    function getButtonNotifyMode(btnName: string) {
+        const notify = _buttonsWithNotifyClick?.find(
             btn =>
                 (typeof btn === 'string' && btn === btnName)
                 || (typeof btn === 'object' && btn.key === btnName)
@@ -624,14 +288,14 @@ const Toolbox = (props: IProps) => {
      * @param {Object} buttons - The list of toolbar buttons.
      * @returns {void}
      */
-    function _setButtonsNotifyClickMode(buttons: Object) {
-        if (typeof APP === 'undefined' || !props._buttonsWithNotifyClick?.length) {
+    function setButtonsNotifyClickMode(buttons: Object) {
+        if (typeof APP === 'undefined' || !_buttonsWithNotifyClick?.length) {
             return;
         }
 
         Object.values(buttons).forEach((button: any) => {
             if (typeof button === 'object') {
-                button.notifyMode = _getButtonNotifyMode(button.key);
+                button.notifyMode = getButtonNotifyMode(button.key);
             }
         });
     }
@@ -642,17 +306,10 @@ const Toolbox = (props: IProps) => {
      * @param {Object} state - The redux state.
      * @returns {Object} The visible buttons arrays .
      */
-    function _getVisibleButtons() {
-        const {
-            _clientWidth,
-            _toolbarButtons,
-            _jwtDisabledButons,
-            _customToolbarButtons
-        } = props;
-
+    function getVisibleButtons() {
         const buttons = getAllToolboxButtons(_customToolbarButtons);
 
-        _setButtonsNotifyClickMode(buttons);
+        setButtonsNotifyClickMode(buttons);
         const isHangupVisible = isToolbarButtonEnabled('hangup', _toolbarButtons);
         let { order } = THRESHOLDS.find(({ width }) => _clientWidth > width)
             || THRESHOLDS[THRESHOLDS.length - 1];
@@ -663,7 +320,7 @@ const Toolbox = (props: IProps) => {
             ...order.map(key => buttons[key as keyof typeof buttons]),
             ...Object.values(buttons).filter((button, index) => !order.includes(keys[index]))
         ].filter(({ key, alias = NOT_APPLICABLE }) =>
-            !_jwtDisabledButons.includes(key)
+            !_jwtDisabledButtons.includes(key)
             && (isToolbarButtonEnabled(key, _toolbarButtons) || isToolbarButtonEnabled(alias, _toolbarButtons))
         );
         const filteredKeys = filtered.map(button => button.key);
@@ -693,9 +350,7 @@ const Toolbox = (props: IProps) => {
      * @private
      * @returns {void}
      */
-    function _onMouseOut() {
-        const { _overflowMenuVisible, dispatch } = props;
-
+    function onMouseOut() {
         !_overflowMenuVisible && dispatch(setToolbarHovered(false));
     }
 
@@ -705,8 +360,8 @@ const Toolbox = (props: IProps) => {
      * @private
      * @returns {void}
      */
-    function _onMouseOver() {
-        props.dispatch(setToolbarHovered(true));
+    function onMouseOver() {
+        dispatch(setToolbarHovered(true));
     }
 
     /**
@@ -714,35 +369,22 @@ const Toolbox = (props: IProps) => {
      *
      * @returns {void}
      */
-    const _onTabIn = useCallback(() => {
-        if (!props._visible) {
-            props.dispatch(showToolbox());
+    const onTabIn = useCallback(() => {
+        if (!_visible) {
+            dispatch(showToolbox());
         }
-    }, [ props._visible ]);
+    }, [ _visible ]);
 
     /**
      * Renders the toolbox content.
      *
      * @returns {ReactElement}
      */
-    function _renderToolboxContent() {
-        const {
-            _endConferenceSupported,
-            _hangupMenuVisible,
-            _isMobile,
-            _isNarrowLayout,
-            _overflowDrawer,
-            _overflowMenuVisible,
-            _reactionsEnabled,
-            _reactionsButtonEnabled,
-            _toolbarButtons,
-            t
-        } = props;
-
+    function renderToolboxContent() {
         const toolbarAccLabel = 'toolbar.accessibilityLabel.moreActionsMenu';
         const containerClassName = `toolbox-content${_isMobile || _isNarrowLayout ? ' toolbox-content-mobile' : ''}`;
 
-        const { mainMenuButtons, overflowMenuButtons } = _getVisibleButtons();
+        const { mainMenuButtons, overflowMenuButtons } = getVisibleButtons();
         const raiseHandInOverflowMenu = overflowMenuButtons.some(({ key }) => key === 'raisehand');
         const showReactionsInOverflowMenu
             = (_reactionsEnabled && !_reactionsButtonEnabled
@@ -754,10 +396,10 @@ const Toolbox = (props: IProps) => {
             <div className = { containerClassName }>
                 <div
                     className = 'toolbox-content-wrapper'
-                    onFocus = { _onTabIn }
+                    onFocus = { onTabIn }
                     { ...(_isMobile ? {} : {
-                        onMouseOut: _onMouseOut,
-                        onMouseOver: _onMouseOver
+                        onMouseOut,
+                        onMouseOver
                     }) }>
 
                     <div
@@ -798,8 +440,8 @@ const Toolbox = (props: IProps) => {
                                 }, []) }
                                 isOpen = { _overflowMenuVisible }
                                 key = 'overflow-menu'
-                                onToolboxEscKey = { _onEscKey }
-                                onVisibilityChange = { _onSetOverflowVisible }
+                                onToolboxEscKey = { onEscKey }
+                                onVisibilityChange = { onSetOverflowVisible }
                                 showRaiseHandInReactionsMenu = { showRaiseHandInReactionsMenu }
                                 showReactionsMenu = { showReactionsInOverflowMenu } />
                         )}
@@ -810,27 +452,27 @@ const Toolbox = (props: IProps) => {
                                     ariaControls = 'hangup-menu'
                                     isOpen = { _hangupMenuVisible }
                                     key = 'hangup-menu'
-                                    notifyMode = { _getButtonNotifyMode('hangup-menu') }
-                                    onVisibilityChange = { _onSetHangupVisible }>
+                                    notifyMode = { getButtonNotifyMode('hangup-menu') }
+                                    onVisibilityChange = { onSetHangupVisible }>
                                     <ContextMenu
                                         accessibilityLabel = { t(toolbarAccLabel) }
                                         className = { classes.hangupMenu }
                                         hidden = { false }
                                         inDrawer = { _overflowDrawer }
-                                        onKeyDown = { _onEscKey }>
+                                        onKeyDown = { onEscKey }>
                                         <EndConferenceButton
                                             buttonKey = 'end-meeting'
-                                            notifyMode = { _getButtonNotifyMode('end-meeting') } />
+                                            notifyMode = { getButtonNotifyMode('end-meeting') } />
                                         <LeaveConferenceButton
                                             buttonKey = 'hangup'
-                                            notifyMode = { _getButtonNotifyMode('hangup') } />
+                                            notifyMode = { getButtonNotifyMode('hangup') } />
                                     </ContextMenu>
                                 </HangupMenuButton>
                                 : <HangupButton
                                     buttonKey = 'hangup'
                                     customClass = 'hangup-button'
                                     key = 'hangup-button'
-                                    notifyMode = { _getButtonNotifyMode('hangup') }
+                                    notifyMode = { getButtonNotifyMode('hangup') }
                                     visible = { isToolbarButtonEnabled('hangup', _toolbarButtons) } />
                         )}
                     </div>
@@ -839,19 +481,18 @@ const Toolbox = (props: IProps) => {
         );
     }
 
-    if (props._disabled) {
+    if (_disabled) {
         return null;
     }
 
-    const { _chatOpen, _visible, _toolbarButtons } = props;
     const rootClassNames = `new-toolbox ${_visible ? 'visible' : ''} ${
         _toolbarButtons.length ? '' : 'no-buttons'} ${_chatOpen ? 'shift-right' : ''}`;
 
     return (
         <div
-            className = { cx(rootClassNames, props._shiftUp && 'shift-up') }
+            className = { cx(rootClassNames, _shiftUp && 'shift-up') }
             id = 'new-toolbox'>
-            {_renderToolboxContent()}
+            {renderToolboxContent()}
         </div>
     );
 };
@@ -876,12 +517,10 @@ function _mapStateToProps(state: IReduxState, ownProps: any) {
         iAmSipGateway
     } = state['features/base/config'];
     const {
-        fullScreen,
         hangupMenuVisible,
         overflowMenuVisible,
         overflowDrawer
     } = state['features/toolbox'];
-    const localParticipant = getLocalParticipant(state);
     const { clientWidth } = state['features/base/responsive-ui'];
     let toolbarButtons = ownProps.toolbarButtons || getToolbarButtons(state);
     const _reactionsEnabled = isReactionsEnabled(state);
@@ -895,27 +534,18 @@ function _mapStateToProps(state: IReduxState, ownProps: any) {
         _chatOpen: state['features/chat'].isOpen,
         _clientWidth: clientWidth,
         _customToolbarButtons: customToolbarButtons,
-        _desktopSharingEnabled: JitsiMeetJS.isDesktopSharingEnabled(),
-        _desktopSharingButtonDisabled: isDesktopShareButtonDisabled(state),
         _dialog: Boolean(state['features/base/dialog'].component),
         _disabled: Boolean(iAmRecorder || iAmSipGateway),
         _endConferenceSupported: Boolean(endConferenceSupported),
-        _fullScreen: fullScreen,
-        _gifsEnabled: isGifEnabled(state),
         _isMobile: isMobileBrowser(),
-        _isSpeakerStatsDisabled: isSpeakerStatsDisabled(state),
-        _jwtDisabledButons: getJwtDisabledButtons(state),
+        _jwtDisabledButtons: getJwtDisabledButtons(state),
         _hangupMenuVisible: hangupMenuVisible,
         _isNarrowLayout: isNarrowLayout,
         _overflowMenuVisible: overflowMenuVisible,
         _overflowDrawer: overflowDrawer,
-        _participantsPaneOpen: getParticipantsPaneOpen(state),
-        _raisedHand: hasRaisedHand(localParticipant),
         _reactionsButtonEnabled: isReactionsButtonEnabled(state),
         _reactionsEnabled,
-        _screenSharing: isScreenVideoShared(state),
         _shiftUp: state['features/toolbox'].shiftUp,
-        _tileViewEnabled: shouldDisplayTileView(state),
         _toolbarButtons: toolbarButtons,
         _visible: isToolboxVisible(state)
     };
